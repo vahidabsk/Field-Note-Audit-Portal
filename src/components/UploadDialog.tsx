@@ -1,7 +1,5 @@
-import { FileText, Loader2, UploadCloud } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { hasUsefulCertificateData, parseCertificateText } from "../lib/certificate-parser";
-import { extractDocxText } from "../lib/docx-extract";
+import { FileText, UploadCloud } from "lucide-react";
+import { useRef, useState } from "react";
 import type { ParsedCertificate } from "../lib/audit-storage";
 import { toast } from "../hooks/use-toast";
 import { Button } from "./ui/button";
@@ -61,61 +59,52 @@ export function UploadDialog({
   title?: string;
   initialFiles?: File[] | null;
 }) {
-  const [processing, setProcessing] = useState(false);
   const [certs, setCerts] = useState<ParsedCertificate[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const processFiles = async (files: FileList | File[]) => {
-    setProcessing(true);
+  const processFiles = (files: FileList | File[]) => {
+    const docxFiles = Array.from(files).filter((file) =>
+      file.name.toLowerCase().endsWith(".docx"),
+    );
 
-    try {
-      const next: ParsedCertificate[] = [];
-
-      for (const file of Array.from(files)) {
-        const lower = file.name.toLowerCase();
-        if (!lower.endsWith(".docx")) {
-          continue;
-        }
-
-        const text = await extractDocxText(file);
-        const parsed = parseCertificateText(text, file.name);
-        parsed.uploadedAt = new Date().toISOString();
-        next.push(parsed);
-      }
-
-      setCerts(next);
-
-      if (!next.length) {
-        toast({
-          title: "Unsupported files",
-          description: "Upload .docx files only.",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      console.error(error);
+    if (!docxFiles.length) {
       toast({
-        title: "Extraction failed",
-        description:
-          "The DOCX file could not be parsed in-browser. You can still continue with manual entry.",
+        title: "Unsupported files",
+        description: "Upload .docx files only.",
         variant: "destructive",
       });
-      setCerts([{ fileName: "Manual entry" }]);
-    } finally {
-      setProcessing(false);
+      return;
     }
+
+    const next: ParsedCertificate[] = docxFiles.map((file) => ({
+      fileName: file.name,
+      uploadedAt: new Date().toISOString(),
+    }));
+
+    setCerts(next);
+
+    toast({
+      title: "Manual review ready",
+      description:
+        "Automatic field detection is temporarily disabled for reliability. Fill the review form manually, then confirm.",
+    });
   };
 
-  useEffect(() => {
-    if (open && initialFiles?.length) {
-      processFiles(initialFiles);
-    }
-  }, [open, initialFiles]);
-
-  const hasDetectedData = certs.some(hasUsefulCertificateData);
+  // If files were drag-dropped before opening the dialog
+  if (open && initialFiles && initialFiles.length > 0 && certs.length === 0) {
+    processFiles(initialFiles);
+  }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) {
+          setCerts([]);
+        }
+        onOpenChange(next);
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
@@ -131,9 +120,11 @@ export function UploadDialog({
             }}
           >
             <UploadCloud className="mx-auto h-10 w-10 text-slate-400" />
-            <div className="mt-3 text-base font-semibold text-slate-800">Drag & drop .docx</div>
+            <div className="mt-3 text-base font-semibold text-slate-800">
+              Drag &amp; drop .docx
+            </div>
             <div className="mt-1 text-sm text-slate-600">
-              DOCX is the reliable upload path for the certificate parser.
+              Upload a DOCX certificate and review/edit fields before creating the audit.
             </div>
 
             <Button
@@ -159,22 +150,13 @@ export function UploadDialog({
             />
           </div>
 
-          {processing ? (
-            <div className="flex items-center gap-2 text-sm text-slate-600">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Extracting certificate text…
-            </div>
-          ) : null}
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            Automatic field extraction is temporarily disabled so the review dialog does not hang.
+            You can still create audits by entering the fields manually below.
+          </div>
 
           {certs.length > 0 ? (
             <div className="space-y-4">
-              {!hasDetectedData ? (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                  No fields automatically detected. Fill the review form manually before creating
-                  the audit.
-                </div>
-              ) : null}
-
               {certs.map((cert, index) => (
                 <div key={index} className="rounded-xl border p-4">
                   <div className="mb-4 flex items-center gap-2 font-medium text-slate-900">
@@ -192,10 +174,7 @@ export function UploadDialog({
                             setCerts((prev) =>
                               prev.map((item, itemIndex) =>
                                 itemIndex === index
-                                  ? {
-                                      ...item,
-                                      [field]: e.target.value,
-                                    }
+                                  ? { ...item, [field]: e.target.value }
                                   : item,
                               ),
                             )
@@ -222,7 +201,9 @@ export function UploadDialog({
                                       ...item,
                                       deviceCounts: {
                                         ...(item.deviceCounts ?? {}),
-                                        [k]: e.target.value ? Number(e.target.value) : undefined,
+                                        [k]: e.target.value
+                                          ? Number(e.target.value)
+                                          : undefined,
                                       },
                                     }
                                   : item,
@@ -254,7 +235,7 @@ export function UploadDialog({
           <Button
             variant="accent"
             type="button"
-            disabled={processing || certs.length === 0}
+            disabled={certs.length === 0}
             onClick={() => {
               onConfirm(certs);
               setCerts([]);
